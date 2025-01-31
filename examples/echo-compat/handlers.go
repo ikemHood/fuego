@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
 
 	"github.com/go-fuego/fuego"
 )
 
-func ginController(c *gin.Context) {
-	c.String(200, "pong")
+func echoController(c echo.Context) error {
+	return c.String(http.StatusOK, "pong")
 }
 
 func fuegoControllerGet(c fuego.ContextNoBody) (HelloResponse, error) {
@@ -28,12 +29,22 @@ func fuegoControllerPost(c fuego.ContextWithBody[HelloRequest]) (*HelloResponse,
 		return nil, fuego.BadRequestError{Title: "Forbidden word"}
 	}
 
-	_ = c.Context().(*gin.Context) // Access to the Gin context
-
 	name := c.QueryParam("name")
-	_ = c.QueryParam("not-existing-param-raises-warning")
 
 	return &HelloResponse{
 		Message: fmt.Sprintf("Hello %s, %s", body.Word, name),
 	}, nil
+}
+
+func serveOpenApiJSONDescription(s *fuego.OpenAPI) echo.HandlerFunc {
+	return func(ctx echo.Context) error {
+		return ctx.JSON(http.StatusOK, s.Description())
+	}
+}
+
+func DefaultOpenAPIHandler(specURL string) echo.HandlerFunc {
+	return func(ctx echo.Context) error {
+		ctx.Response().Header().Set(echo.HeaderContentType, "text/html; charset=utf-8")
+		return ctx.String(http.StatusOK, fuego.DefaultOpenAPIHTML(specURL))
+	}
 }

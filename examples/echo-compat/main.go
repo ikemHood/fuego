@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/go-fuego/fuego"
-	"github.com/go-fuego/fuego/extra/fuegogin"
+	"github.com/go-fuego/fuego/extra/fuegoecho"
 	"github.com/go-fuego/fuego/option"
 	"github.com/go-fuego/fuego/param"
 )
@@ -27,39 +28,42 @@ type HelloResponse struct {
 func main() {
 	e, _ := server()
 
-	fmt.Println("OpenAPI at at http://localhost:8980/swagger ✅")
+	fmt.Println("OpenAPI at http://localhost:8980/swagger ✅")
 
-	err := e.Run(":8980")
+	err := e.Start(":8980")
 	if err != nil {
 		panic(err)
 	}
 }
 
-func server() (*gin.Engine, *fuego.OpenAPI) {
-	ginRouter := gin.Default()
+func server() (*echo.Echo, *fuego.OpenAPI) {
+	echoRouter := echo.New()
+	echoRouter.Use(middleware.Logger())
+	echoRouter.Use(middleware.Recover())
+
 	engine := fuego.NewEngine()
 
-	// Register Gin controller
-	ginRouter.GET("/gin", ginController)
+	// Register Echo controller
+	echoRouter.GET("/echo", echoController)
 
 	// Incrementally add OpenAPI spec
-	// 1️⃣ Level 1: Register Gin controller to Gin router, plugs Fuego OpenAPI route declaration
-	fuegogin.GetGin(engine, ginRouter, "/gin-with-openapi", ginController)
+	// 1️⃣ Level 1: Register Echo controller to Echo router, plugs Fuego OpenAPI route declaration
+	fuegoecho.GetEcho(engine, echoRouter, "/echo-with-openapi", echoController)
 
-	// 2️⃣ Level 2: Register Gin controller to Gin router, manually add options (not checked inside the Gin controller)
-	fuegogin.GetGin(engine, ginRouter, "/gin-with-openapi-and-options", ginController,
+	// 2️⃣ Level 2: Register Echo controller to Echo router, manually add options (not checked inside the Echo controller)
+	fuegoecho.GetEcho(engine, echoRouter, "/echo-with-openapi-and-options", echoController,
 		// OpenAPI options
-		option.Summary("Gin controller with options"),
+		option.Summary("Echo controller with options"),
 		option.Description("Some description"),
 		option.OperationID("MyCustomOperationID"),
-		option.Tags("Gin"),
+		option.Tags("Echo"),
 	)
 
-	// 3️⃣ Level 3: Register Fuego controller to Gin router. Fuego take care of serialization/deserialization, error handling, content-negotiation, etc.
-	fuegogin.Get(engine, ginRouter, "/fuego", fuegoControllerGet)
+	// 3️⃣ Level 3: Register Fuego controller to Echo router. Fuego takes care of serialization/deserialization, error handling, content negotiation, etc.
+	fuegoecho.Get(engine, echoRouter, "/fuego", fuegoControllerGet)
 
 	// 4️⃣ Level 4: Add some options to the POST endpoint (checks at start-time + validations at request time)
-	fuegogin.Post(engine, ginRouter, "/fuego-with-options", fuegoControllerPost,
+	fuegoecho.Post(engine, echoRouter, "/fuego-with-options", fuegoControllerPost,
 		// OpenAPI options
 		option.Description("Some description"),
 		option.OperationID("SomeOperationID"),
@@ -73,17 +77,18 @@ func server() (*gin.Engine, *fuego.OpenAPI) {
 		option.Header("Content-Type", "Content Type", param.Default("application/json")),
 	)
 
-	// Supports groups & path parameters even for gin handlers
-	group := ginRouter.Group("/my-group/:id")
-	fuegogin.Get(engine, group, "/fuego", fuegoControllerGet,
-		option.Summary("Route with group and id"),
-		option.Tags("Fuego"),
-	)
-
-	engine.RegisterOpenAPIRoutes(&fuegogin.OpenAPIHandler{ginRouter})
+	// TODO: Supports groups & path parameters even for Echo handlers
+	// group := echoRouter.Group("/my-group/:id")
+	// fuegoecho.Get(engine, group, "/fuego", fuegoControllerGet,
+	// 	option.Summary("Route with group and id"),
+	// 	option.Tags("Fuego"),
+	// )
 
 	// Serve the OpenAPI spec
-	return ginRouter, engine.OpenAPI
+	echoRouter.GET("/openapi.json", serveOpenApiJSONDescription(engine.OpenAPI))
+	echoRouter.GET("/swagger", DefaultOpenAPIHandler("/openapi.json"))
+
+	return echoRouter, engine.OpenAPI
 }
 
 func (h *HelloRequest) InTransform(ctx context.Context) error {

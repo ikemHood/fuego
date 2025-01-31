@@ -1,6 +1,7 @@
 package fuego
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -79,6 +80,23 @@ func NewOpenApiSpec() openapi3.T {
 	return spec
 }
 
+type OpenAPIServable interface {
+	SpecHandler(e *Engine)
+	UIHandler(e *Engine)
+}
+
+func (e *Engine) RegisterOpenAPIRoutes(o OpenAPIServable) {
+	if e.OpenAPIConfig.Disabled {
+		return
+	}
+	o.SpecHandler(e)
+
+	if e.OpenAPIConfig.DisableSwaggerUI {
+		return
+	}
+	o.UIHandler(e)
+}
+
 // Hide prevents the routes in this server or group from being included in the OpenAPI spec.
 // Deprecated: Please use [OptionHide] with [WithRouteOptions]
 func (s *Server) Hide() *Server {
@@ -96,46 +114,6 @@ func (s *Server) Show() *Server {
 		OptionShow(),
 	)(s)
 	return s
-}
-
-// OutputOpenAPISpec takes the OpenAPI spec and outputs it to a JSON file and/or serves it on a URL.
-// Also serves a Swagger UI.
-// To modify its behavior, use the [WithOpenAPIConfig] option.
-func (s *Server) OutputOpenAPISpec() openapi3.T {
-	s.OpenAPI.Description().Servers = append(s.OpenAPI.Description().Servers, &openapi3.Server{
-		URL:         s.url(),
-		Description: "local server",
-	})
-
-	if !s.OpenAPIConfig.Disabled {
-		s.registerOpenAPIRoutes(s.Engine.OutputOpenAPISpec())
-	}
-
-	return *s.OpenAPI.Description()
-}
-
-// Registers the routes to serve the OpenAPI spec and Swagger UI.
-func (s *Server) registerOpenAPIRoutes(jsonSpec []byte) {
-	GetStd(s, s.OpenAPIServerConfig.SpecURL, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jsonSpec)
-	})
-	s.printOpenAPIMessage(fmt.Sprintf("JSON spec: %s%s", s.url(), s.OpenAPIServerConfig.SpecURL))
-
-	if s.OpenAPIServerConfig.DisableSwaggerUI {
-		return
-	}
-	Registers(s.Engine, netHttpRouteRegisterer[any, any]{
-		s: s,
-		route: Route[any, any]{
-			BaseRoute: BaseRoute{
-				Method: http.MethodGet,
-				Path:   s.OpenAPIServerConfig.SwaggerURL + "/",
-			},
-		},
-		controller: s.OpenAPIServerConfig.UIHandler(s.OpenAPIServerConfig.SpecURL),
-	})
-	s.printOpenAPIMessage(fmt.Sprintf("OpenAPI UI: %s%s/index.html", s.url(), s.OpenAPIServerConfig.SwaggerURL))
 }
 
 func validateSpecURL(specURL string) bool {
@@ -250,6 +228,40 @@ func RegisterOpenAPIOperation[T, B any](openapi *OpenAPI, route Route[T, B]) (*o
 	openapi.Description().AddOperation(route.Path, route.Method, route.Operation)
 
 	return route.Operation, nil
+}
+
+// RegisterParams registers the parameters of a given type to an OpenAPI operation.
+// It inspects the fields of the provided struct, looking for "header" tags, and creates
+// OpenAPI parameters for each tagged field.
+func (route *RouteWithParams[Params, ResponseBody, RequestBody]) RegisterParams() error {
+	if route.Operation == nil {
+		route.Operation = openapi3.NewOperation()
+	}
+	params := *new(Params)
+	typeOfParams := reflect.TypeOf(params)
+	if typeOfParams == nil {
+		return errors.New("params cannot be nil")
+	}
+	if typeOfParams.Kind() == reflect.Ptr {
+		typeOfParams = typeOfParams.Elem()
+	}
+
+	if typeOfParams.Kind() == reflect.Struct {
+		for i := range typeOfParams.NumField() {
+			field := typeOfParams.Field(i)
+			if headerKey, ok := field.Tag.Lookup("header"); ok {
+				OptionHeader(headerKey, "string")(&route.BaseRoute)
+			}
+			if queryKey, ok := field.Tag.Lookup("query"); ok {
+				OptionQuery(queryKey, "string")(&route.BaseRoute)
+			}
+			if cookieKey, ok := field.Tag.Lookup("cookie"); ok {
+				OptionCookie(cookieKey, "string")(&route.BaseRoute)
+			}
+		}
+	}
+
+	return nil
 }
 
 func newRequestBody[RequestBody any](tag SchemaTag, consumes []string) *openapi3.RequestBody {
