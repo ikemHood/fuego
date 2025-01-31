@@ -7,10 +7,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-func NewRoute[T, B any](method, path string, handler any, e *Engine, config RouteConfig, options ...func(*BaseRoute)) Route[T, B] {
-	if config.StripTrailingSlash && len(path) > 1 {
-		path = strings.TrimRight(path, "/")
-	}
+func NewRoute[T, B any](method, path string, handler any, e *Engine, options ...func(*BaseRoute)) Route[T, B] {
 	return Route[T, B]{
 		BaseRoute: NewBaseRoute(method, path, handler, e, options...),
 	}
